@@ -21,6 +21,12 @@ class ChatGPTClient:
             )
         openai.api_key = key
 
+        if not (base := environ.get("CHATGPT_API_BASE")):
+            raise Exception(
+                "chatGPT api base is not set as an environment variable"
+            )
+        openai.api_base = base
+
     def add_message(self, message: Message) -> None:
         self.messages.append(message)
 

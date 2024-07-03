@@ -1,6 +1,6 @@
 .PHONY: init
 init:
-	test -f .env || cp .env.template .env
+	powershell -Command "if (!(Test-Path .env)) { Copy-Item .env.template .env }"
 	pip install --upgrade pip
 	pip install -r requirements.txt
 
