@@ -13,8 +13,7 @@ from app.gpt.client import ChatGPTClient
 from app.gpt.constants import PROBLEM_OCCURS_TITLE, Model, Role
 from app.gpt.message import Message
 from app.steam.steam_game_info import get_random_steam_game_info
-from app.iTunes.iTunes_game_info import get_app_names
-from app.iTunes.iTunes_game_info import generate_random_app_ids
+from app.iTunes.iTunes_game_info import get_game_apps
 
 load_dotenv(".env", verbose=True)
 
@@ -133,22 +132,11 @@ def handle_message(event: MessageEvent) -> None:
         )
 
     if text_message.text == "スマホ":
-        # ここでランダムにアプリIDを生成して、iTunes APIからアプリ情報を取得する
-        app_info_list = []
-        while len(app_info_list) < 2:
-            random_app_ids = generate_random_app_ids(50)
-
-            for app_id in random_app_ids:
-                app_name, app_description = get_app_names(app_id)
-                if app_name and app_description:
-                    app_info_list.append(f"(アプリ名: {app_name}) (AppID: {app_id})\nアプリの詳細: {app_description}")
-
-                if len(app_info_list) >= 2:
-                    break
+        app_info_list = get_game_apps(5)
 
         if app_info_list:
             app_descriptions = "\n".join(app_info_list)
-            reply_message = f"アプリ名、アプリID、アプリ詳細の順に記載してください。また、アプリ詳細に関しては日本語にして且つ要約してください。全て箇条書きに。:\n\n{app_descriptions}"
+            reply_message = f"アプリ名、アプリ詳細の順に記載してください。また、アプリ詳細に関しては日本語にして且つ要約してください。全て箇条書きに。また見やすく工夫を。:\n\n{app_descriptions}"
         else:
             reply_message = "iTunesアプリ情報が取得できませんでした。"
         
