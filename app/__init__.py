@@ -13,7 +13,7 @@ from app.gpt.client import ChatGPTClient
 from app.gpt.constants import PROBLEM_OCCURS_TITLE, Model, Role
 from app.gpt.message import Message
 from app.steam.steam_game_info import get_random_steam_game_info, get_random_action_games, get_random_adv_games, get_random_early_games
-from app.iTunes.iTunes_game_info import get_game_apps, get_action_game_apps, get_adv_game_apps, get_puzzle_game_apps
+from app.iTunes.iTunes_game_info import get_game_apps, get_action_game_apps, get_adv_game_apps, get_puzzle_game_apps, get_game_apps_free
 
 load_dotenv(".env", verbose=True)
 
@@ -453,28 +453,98 @@ def handle_message(event: MessageEvent) -> None:
         
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=res_text.strip()))
                 
-    # 1. ユーザーからの意見をChatGPTに送信して意図を解析するプロンプトを作成
-    prompt = f"以下はユーザーからの要望です。内容を分析し、関連性の高いゲームを3つ推薦してください。" \
-             f"それぞれのゲームの名前と日本語で簡単な特徴を列挙形式で説明してください:\n\n「{text_message}」"
+    def classify_user_intent(text_message: str) -> str:
+        prompt = f"""
+        以下のテキストを解析して、PCゲームが欲しいか、スマホゲームが欲しいか、あるいはそのどちらでもないかを答えてください。
+        - PCゲームが欲しい場合: "PC"
+        - スマホゲームが欲しい場合: "スマホ"
+        - どちらでもない場合: "その他"
     
-    gpt_client.add_message(
-        message=Message(role=Role.USER, content=prompt)
-    )
+        ユーザーのリクエスト: 「{text_message}」
+        """
+        # ChatGPTに送信して結果を得る
+        gpt_client.add_message(message=Message(role=Role.USER, content=prompt))
+        try:
+            # ChatGPTからの応答を取得
+            res = gpt_client.create()
+            res_text: str = res["choices"][0]["message"]["content"]
+        except InvalidRequestError as e:
+            res_text = f"問題が発生しました。一度会話をリセットします。\n\n{e.user_message}"
+            gpt_client.reset()
+        except OpenAIError as e:
+            res_text = f"問題が発生しました。\n\n{e.user_message}"
+        return res_text.strip()
+
+
+    def fetch_games(text_message: str):
+        game_list = []
+        intent = classify_user_intent(text_message)
+        if intent == "PC":
+            game_list = get_random_steam_game_info(limit=1000)
+            games_list = game_list["applist"]["apps"]
+            game_descriptions = "\n".join([f"(アプリ名: {game['name']}) (AppID: {game['appid']})" for game in games_list])
+        elif intent == "スマホ":
+            game_list = get_game_apps_free(limit=200)
+            game_descriptions = "\n".join(game_list)
+        else:
+            return "リクエストに基づくゲーム情報が見つかりませんでした。"
+        return game_descriptions
+
+    def refine_game_recommendations(text_message: str, game_data: str):
+        prompt = f"""
+        以下はユーザーからのリクエストです：
+        「{text_message}」
+
+        また、以下はゲームのリストです：
+        {game_data}
+
+        ユーザーのリクエストに最も関連性の高いゲームを3つ選んで、それぞれの名前と特徴を簡単に日本語で説明してください。
+        """
+        gpt_client.add_message(message=Message(role=Role.USER, content=prompt))
+        try:
+            # ChatGPTからの応答を取得
+            res = gpt_client.create()
+            res_text: str = res["choices"][0]["message"]["content"]
+        except InvalidRequestError as e:
+            res_text = f"問題が発生しました。一度会話をリセットします。\n\n{e.user_message}"
+            gpt_client.reset()
+        except OpenAIError as e:
+            res_text = f"問題が発生しました。\n\n{e.user_message}"
+        return res_text
+
+    def recommend_refined_games(text_message: str):
+        # APIからゲーム情報を取得
+        game_data = fetch_games(text_message)
+    
+        if not game_data or "情報が見つかりません" in game_data:
+            # 1. ユーザーからの意見をChatGPTに送信して意図を解析するプロンプトを作成
+            prompt = f"以下はユーザーからの要望です。内容を分析し、関連性の高いゲームを3つ推薦してください。" \
+                    f"それぞれのゲームの名前と日本語で簡単な特徴を列挙形式で説明してください。:\n\n「{text_message}」"
+            
+            gpt_client.add_message(
+                message=Message(role=Role.USER, content=prompt)
+            )
                 
-    # 2. ChatGPTからの応答を取得して解析結果をLINEに送信
-    try:
-        res = gpt_client.create()
-        res_text: str = res["choices"][0]["message"]["content"]
+            # 2. ChatGPTからの応答を取得して解析結果をLINEに送信
+            try:
+                res = gpt_client.create()
+                res_text: str = res["choices"][0]["message"]["content"]
+                return res_text
+            except InvalidRequestError as e:
+                error_message = f"エラーが発生しました。一度会話をリセットします。\n\n{e.user_message}"
+                gpt_client.reset()  # エラー時にChatGPTの会話をリセット
+                return error_message
+            except OpenAIError as e:
+                error_message = f"問題が発生しました。\n\n{e.user_message}"
+                return error_message
+        else:
+            # ChatGPTでフィルタリング
+            refined_recommendations = refine_game_recommendations(text_message, game_data)
+            return refined_recommendations
 
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=res_text.strip()))
+    result = recommend_refined_games(text_message)    
 
-    except InvalidRequestError as e:
-        error_message = f"エラーが発生しました。一度会話をリセットします。\n\n{e.user_message}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_message))
-        gpt_client.reset()  # エラー時にChatGPTの会話をリセット
-    except OpenAIError as e:
-        error_message = f"問題が発生しました。\n\n{e.user_message}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_message))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=result.strip()))
 
     # ChatGPTのインスタンスを再保存
     chatgpt_instance_map[user_id] = gpt_client
